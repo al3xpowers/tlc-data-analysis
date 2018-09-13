@@ -132,3 +132,4 @@ FROM tlc.combo7
 WHERE payment_type = 'CRD'
 AND total_amt != 0
 GROUP BY ride_hour;
+# 
