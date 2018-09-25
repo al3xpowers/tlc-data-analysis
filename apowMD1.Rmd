@@ -1,0 +1,185 @@
+---
+title: "TLC Data Analysis"
+author: "Alex Powers"
+date: "9/12/2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+### Setup
+Initial setup of the TLC data was done on Google BigQuery, detailed elsewhere. Connecting BigQuery to R was not relatively smooth and required configuring the BigQuery API.
+First we sample 850K records for analysis, or ~.05% of the total for this exploratory exercise.
+We clean up the data by only taking payments done with card (since cash tips are't recorded),
+as well as excluding trips of extreme length (>= 100 miles).
+
+```{r message=FALSE, warning=FALSE}
+setwd("~/Workdir/tlc/R")
+library(bigrquery)
+library(ggplot2)
+library(tidyverse)
+project = "sylvan-rampart-159916"
+set_service_token("zuul.json")
+sql <- "SELECT trip_distance, tip_amt, rand(5) AS rand FROM tlc.combo7
+WHERE payment_type = 'CRD' AND trip_distance < 100
+ORDER BY rand LIMIT 850000"
+questX <- query_exec(sql, project = project, useLegacySql = FALSE, max_pages = Inf)
+```
+
+
+### Does trip distince increase tipping? 
+We'd expect to see that drivers tip more as rides get longer - is that the case? 
+
+```{r}
+questXlm <- lm(tip_amt ~ trip_distance, data = questX)
+summary(questXlm)
+```
+
+We can see that there is a positive and strong effect of trip distance on tip amount to the point where trip distance explains roughly half the variability in tip amount.
+
+Plotting these data reveals additional characteristics. 
+
+```{r}
+ggplot(questX, aes(trip_distance, tip_amt)) +
+  geom_point(shape = 20, alpha = 1/16) +
+  geom_smooth(method = lm) +
+  coord_cartesian(xlim = c(0, 25), ylim = c(0, 25)) +
+  theme_bw() +
+  labs(x = "Trip distance (mi)", y = "Tip amount ($)")
+```
+
+The trendline, plotted, clearly follows the bulk of the points. You can see some striation in the scatter, which indicates that people often round tips to the nearest whole dollar amount. Oftentimes the tip is $0. There's another interesting angle we could explore here - for instance, what is responsible for the distinct "tail" of points that shoots out at a sharp upward trajectory near the origin and above the trendline? Let's save that for another day..
+
+### Does trip distance increase tipping generosity?
+
+It's fairly unsurprising that increased trip distance leads to larger trips. But do riders respond by rewarding drivers for long-distance hauls, or does sticker shock make them less likely to leave generous tips? 
+
+First we yank down some data on total fare as well as tip paid.
+
+```{r}
+sql2 <- "SELECT trip_distance, tip_amt, total_amt, passenger_count, rand(5) AS rand FROM tlc.combo7
+WHERE payment_type = 'CRD' AND trip_distance < 100
+ORDER BY rand LIMIT 850000"
+questY <- query_exec(sql2, project = project, useLegacySql = FALSE, max_pages = Inf)
+```
+
+Next step is to calculate a tip share variable and run a regression with that as the outcome.
+
+```{r}
+library(dplyr)
+questYA <- questY %>% 
+  mutate(tip_share = tip_amt/total_amt) %>% select(-rand)
+
+questYAlm <- lm(tip_share ~ trip_distance, data = questYA)
+summary(questYAlm)
+```
+
+Now we see a slight, but statistically significant, *negative* relationship. People become slightly less generous as the meter climbs.
+
+```{r warning = FALSE}
+ggplot(questYA, aes(trip_distance, tip_share)) +
+  geom_point(shape = 20, alpha = 1/16) +
+  geom_smooth(method = lm) +
+  coord_cartesian(xlim = c(0, 25), ylim = c(0, 1)) +
+  theme_bw() +
+  labs(x = "Trip distance (mi)", y = "Tip share (%)")
+```
+
+It's a bit difficult to parse the trends in this scatter - not as clear as the last one. Let's take a different approach, by splitting the dataset into four sections by ride length and eyeball any differences in the distributions.
+
+```{r message=FALSE, warning=FALSE}
+questY1 <- questYA %>% filter(trip_distance > 0 & trip_distance <= 5) %>% 
+  select(trip_distance, passenger_count, tip_share)
+questY2 <- questYA %>% filter(trip_distance > 5 & trip_distance <= 15) %>% 
+  select(trip_distance, passenger_count, tip_share)
+questY3 <- questYA %>% filter(trip_distance > 15 & trip_distance <= 25) %>% 
+  select(trip_distance, passenger_count, tip_share)
+questY4 <- questYA %>% filter(trip_distance > 25) %>% 
+  select(trip_distance, passenger_count, tip_share)
+
+q1 <-ggplot(questY1, aes(tip_share)) +
+  geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_bw() +
+  coord_cartesian(xlim = c(0, 1)) +
+  labs(title = "0-5 mi, N = 713,718")
+q2 <-ggplot(questY2, aes(tip_share)) +
+  geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_bw() +
+  labs(title = "5-15 mi, N = 111,015")
+q3 <-ggplot(questY3, aes(tip_share)) +
+  geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_bw() +
+  labs(title = "15-25 mi, N = 20,395")
+q4 <-ggplot(questY4, aes(tip_share)) +
+  geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_bw() +
+  labs(title = "25+ mi, N = 533")
+
+library(gridExtra)
+grid.arrange(q1, q2, q3, q4, nrow = 2)
+```
+
+The share of people dispensing little to no tip increaess dramatically in the bucket of rides over 25 miles. You also see that nobody's tipped over 75% of the trip - not so for the other 3 tranches.
+
+### What other factors influence tipping behavior?
+
+Let's check the usual suspects by running a multiple linear regression on all plausibly linked variables:
+```{r}
+sql3 <- "SELECT trip_distance, tip_amt, total_amt, pickup_datetime, passenger_count, trip_time_in_secs, mta_tax, surcharge, tolls_amt, vendor_id, rand(5) AS rand FROM tlc.combo7
+WHERE payment_type = 'CRD' AND trip_distance < 100
+ORDER BY rand LIMIT 850000"
+
+questZ <- query_exec(sql3, project = project, useLegacySql = FALSE, max_pages = Inf)
+questZlm <- lm (tip_amt/total_amt ~ trip_distance + pickup_datetime + passenger_count +
+               trip_time_in_secs + mta_tax + surcharge + tolls_amt + vendor_id, data = questZ)
+```
+```{r}
+summary (questZlm)
+```
+
+And let's get standardized coefficients so we can compare variable effects easily. 
+
+```{r, message=FALSE, warning=FALSE}
+library(MASS)
+library(QuantPsyc)
+lm.beta(questZlm)
+```
+
+A good many factors significantly contribute to determining tip amount (as a share of total fare): trip distance, tolls, MTA tax, pickup time, and surcharges. These variables were just ordered by decreasing strength of their effect, with trip distance head and shoulders above the rest. The vendor of the payment system also has a statistically significant effect – but being a categorical variable, its effect strength can’t be assessed in tandem with the others. It is the case, however, that trips using the vendor system CMT have, on average, tip shares that are 0.5 percentage points higher than those drivers using VTS. This is a significant financial difference between the two systems, and has been pointed out by Ben Wellington of IQuantNY. 
+
+#### Does weather influence tipping?
+
+What about the weather? Taxis become scarce (and Uber prices surge) during rain squalls - but can weather's effect on tipping behavior be detected in the data we have at hand?
+
+Using Weather Underground’s entire 2013 records from the Central Park station, I found that the 9 days with both rain and snow saw a statistically significant increase in tips as a share of the total fare for those days – albeit a small one, of 0.2 percentage points. Neither rain nor snow, in isolation, has a significant effect. The boxplot below illustrates this neatly.
+
+```{r}
+weather <- read.csv("unified-weather-labels.csv", header = TRUE) 
+w1lm <- lm (tip_share ~ events, data = weather)
+summary(w1lm)
+ggplot(weather, aes(events, tip_share)) +
+  geom_boxplot(aes(fill=events)) +
+  theme_bw() +
+  labs(x = "Weather conditions", y = "Tip amount (% of total fare)") +
+  guides(fill = FALSE)
+```
+
+What about temperature? 
+
+```{r}
+w2lm <- lm (tip_share ~ avg_temp, data = weather)
+summary(w2lm)
+
+ggplot(weather, aes(avg_temp, tip_share)) + 
+  geom_point(shape = 20, alpha = 1/4) +
+  geom_smooth(method = lm, se=FALSE) +
+  theme_bw() +
+  labs(x = "Daily Average Temperature (°F)", y = "Tip amount (% of total fare)")
+```
+
+Temperature also has a statistically significant effect on tipping; a one-degree decrease in temperature results in a 0.004 percentage point increase in tip. The distribution in the scatter plot is fairly apparent as well.
+
