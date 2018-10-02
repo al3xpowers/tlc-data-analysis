@@ -183,3 +183,5 @@ ggplot(weather, aes(avg_temp, tip_share)) +
 
 Temperature also has a statistically significant effect on tipping; a one-degree decrease in temperature results in a 0.004 percentage point increase in tip. The distribution in the scatter plot is fairly apparent as well.
 
+#test commit
+
