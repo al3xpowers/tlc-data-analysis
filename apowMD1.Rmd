@@ -1,17 +1,17 @@
 ---
 title: "TLC Data Analysis"
 author: "Alex Powers"
-date: "9/12/2018"
+date: "October 2018"
 output:
   html_document: default
   pdf_document: default
 ---
 
 ### Setup
-Initial setup of the TLC data was done on Google BigQuery, detailed elsewhere. Connecting BigQuery to R was not relatively smooth and required configuring the BigQuery API.
+Initial setup of the TLC data was done on Google BigQuery, detailed [elsewhere](https://github.com/al3xpowers/tlc-data-analysis/blob/master/tlc1.sql). Connecting BigQuery to R required some configuration of the BigQuery API.
 First we sample 850K records for analysis, or ~.05% of the total for this exploratory exercise.
 We clean up the data by only taking payments done with card (since cash tips are't recorded),
-as well as excluding trips of extreme length (>= 100 miles).
+as well as excluding trips of extreme length (>= 100 miles). Note that 100 miles is enough to reach nearly all of the Hamptons from Manhattan.
 
 ```{r message=FALSE, warning=FALSE}
 setwd("~/Workdir/tlc/R")
@@ -23,16 +23,16 @@ set_service_token("zuul.json")
 sql <- "SELECT trip_distance, tip_amt, rand(5) AS rand FROM tlc.combo7
 WHERE payment_type = 'CRD' AND trip_distance < 100
 ORDER BY rand LIMIT 850000"
-questX <- query_exec(sql, project = project, useLegacySql = FALSE, max_pages = Inf)
+tdX <- query_exec(sql, project = project, useLegacySql = FALSE, max_pages = Inf)
 ```
 
 
-### Does trip distince increase tipping? 
+### Does trip distance increase tipping? 
 We'd expect to see that drivers tip more as rides get longer - is that the case? 
 
 ```{r}
-questXlm <- lm(tip_amt ~ trip_distance, data = questX)
-summary(questXlm)
+tdXlm <- lm(tip_amt ~ trip_distance, data = tdX)
+summary(tdXlm)
 ```
 
 We can see that there is a positive and strong effect of trip distance on tip amount to the point where trip distance explains roughly half the variability in tip amount.
@@ -40,7 +40,7 @@ We can see that there is a positive and strong effect of trip distance on tip am
 Plotting these data reveals additional characteristics. 
 
 ```{r}
-ggplot(questX, aes(trip_distance, tip_amt)) +
+ggplot(tdX, aes(trip_distance, tip_amt)) +
   geom_point(shape = 20, alpha = 1/16) +
   geom_smooth(method = lm) +
   coord_cartesian(xlim = c(0, 25), ylim = c(0, 25)) +
@@ -60,24 +60,24 @@ First we yank down some data on total fare as well as tip paid.
 sql2 <- "SELECT trip_distance, tip_amt, total_amt, passenger_count, rand(5) AS rand FROM tlc.combo7
 WHERE payment_type = 'CRD' AND trip_distance < 100
 ORDER BY rand LIMIT 850000"
-questY <- query_exec(sql2, project = project, useLegacySql = FALSE, max_pages = Inf)
+tdY <- query_exec(sql2, project = project, useLegacySql = FALSE, max_pages = Inf)
 ```
 
 Next step is to calculate a tip share variable and run a regression with that as the outcome.
 
 ```{r}
 library(dplyr)
-questYA <- questY %>% 
+tdYA <- tdY %>% 
   mutate(tip_share = tip_amt/total_amt) %>% select(-rand)
 
-questYAlm <- lm(tip_share ~ trip_distance, data = questYA)
-summary(questYAlm)
+tdYAlm <- lm(tip_share ~ trip_distance, data = tdYA)
+summary(tdYAlm)
 ```
 
 Now we see a slight, but statistically significant, *negative* relationship. People become slightly less generous as the meter climbs.
 
 ```{r warning = FALSE}
-ggplot(questYA, aes(trip_distance, tip_share)) +
+ggplot(tdYA, aes(trip_distance, tip_share)) +
   geom_point(shape = 20, alpha = 1/16) +
   geom_smooth(method = lm) +
   coord_cartesian(xlim = c(0, 25), ylim = c(0, 1)) +
@@ -88,32 +88,32 @@ ggplot(questYA, aes(trip_distance, tip_share)) +
 It's a bit difficult to parse the trends in this scatter - not as clear as the last one. Let's take a different approach, by splitting the dataset into four sections by ride length and eyeball any differences in the distributions.
 
 ```{r message=FALSE, warning=FALSE}
-questY1 <- questYA %>% filter(trip_distance > 0 & trip_distance <= 5) %>% 
+tdY1 <- tdYA %>% filter(trip_distance > 0 & trip_distance <= 5) %>% 
   select(trip_distance, passenger_count, tip_share)
-questY2 <- questYA %>% filter(trip_distance > 5 & trip_distance <= 15) %>% 
+tdY2 <- tdYA %>% filter(trip_distance > 5 & trip_distance <= 15) %>% 
   select(trip_distance, passenger_count, tip_share)
-questY3 <- questYA %>% filter(trip_distance > 15 & trip_distance <= 25) %>% 
+tdY3 <- tdYA %>% filter(trip_distance > 15 & trip_distance <= 25) %>% 
   select(trip_distance, passenger_count, tip_share)
-questY4 <- questYA %>% filter(trip_distance > 25) %>% 
+tdY4 <- tdYA %>% filter(trip_distance > 25) %>% 
   select(trip_distance, passenger_count, tip_share)
 
-q1 <-ggplot(questY1, aes(tip_share)) +
+q1 <-ggplot(tdY1, aes(tip_share)) +
   geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
   coord_cartesian(xlim = c(0, 1)) +
   theme_bw() +
   coord_cartesian(xlim = c(0, 1)) +
   labs(title = "0-5 mi, N = 713,718")
-q2 <-ggplot(questY2, aes(tip_share)) +
+q2 <-ggplot(tdY2, aes(tip_share)) +
   geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
   coord_cartesian(xlim = c(0, 1)) +
   theme_bw() +
   labs(title = "5-15 mi, N = 111,015")
-q3 <-ggplot(questY3, aes(tip_share)) +
+q3 <-ggplot(tdY3, aes(tip_share)) +
   geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
   coord_cartesian(xlim = c(0, 1)) +
   theme_bw() +
   labs(title = "15-25 mi, N = 20,395")
-q4 <-ggplot(questY4, aes(tip_share)) +
+q4 <-ggplot(tdY4, aes(tip_share)) +
   geom_histogram(color="black", alpha = .4, fill="#FF6666", binwidth = .025) +
   coord_cartesian(xlim = c(0, 1)) +
   theme_bw() +
@@ -123,22 +123,22 @@ library(gridExtra)
 grid.arrange(q1, q2, q3, q4, nrow = 2)
 ```
 
-The share of people dispensing little to no tip increaess dramatically in the bucket of rides over 25 miles. You also see that nobody's tipped over 75% of the trip - not so for the other 3 tranches.
+The share of people dispensing little to no tip increaess dramatically in the bucket of rides over 25 miles. You also see, for this distance range, that nobody's tipped over 75% of the trip - not so for the other 3 tranches.
 
 ### What other factors influence tipping behavior?
 
-Let's check the usual suspects by running a multiple linear regression on all plausibly linked variables:
+Let's check the usual suspects by running a multiple linear regression on all plausibly linked variables, with the response variable as tip amount as a share of total fare (let's call this tip yield).
 ```{r}
-sql3 <- "SELECT trip_distance, tip_amt, total_amt, pickup_datetime, passenger_count, trip_time_in_secs, mta_tax, surcharge, tolls_amt, vendor_id, rand(5) AS rand FROM tlc.combo7
+sql3 <- "SELECT trip_distance, tip_amt, total_amt, pickup_datetime, passenger_count, trip_time_in_secs, mta_tax, surcharge, tolls_amt, vendor_id, hack_license, rand(5) AS rand FROM tlc.combo7
 WHERE payment_type = 'CRD' AND trip_distance < 100
 ORDER BY rand LIMIT 850000"
 
-questZ <- query_exec(sql3, project = project, useLegacySql = FALSE, max_pages = Inf)
-questZlm <- lm (tip_amt/total_amt ~ trip_distance + pickup_datetime + passenger_count +
-               trip_time_in_secs + mta_tax + surcharge + tolls_amt + vendor_id, data = questZ)
+tdZ <- query_exec(sql3, project = project, useLegacySql = FALSE, max_pages = Inf)
+tdZlm <- lm (tip_amt/total_amt ~ trip_distance + pickup_datetime + passenger_count +
+               trip_time_in_secs + mta_tax + surcharge + tolls_amt + vendor_id, data = tdZ)
 ```
 ```{r}
-summary (questZlm)
+summary (tdZlm)
 ```
 
 And let's get standardized coefficients so we can compare variable effects easily. 
@@ -146,16 +146,16 @@ And let's get standardized coefficients so we can compare variable effects easil
 ```{r, message=FALSE, warning=FALSE}
 library(MASS)
 library(QuantPsyc)
-lm.beta(questZlm)
+lm.beta(tdZlm)
 ```
 
-A good many factors significantly contribute to determining tip amount (as a share of total fare): trip distance, tolls, MTA tax, pickup time, and surcharges. These variables were just ordered by decreasing strength of their effect, with trip distance head and shoulders above the rest. The vendor of the payment system also has a statistically significant effect – but being a categorical variable, its effect strength can’t be assessed in tandem with the others. It is the case, however, that trips using the vendor system CMT have, on average, tip shares that are 0.5 percentage points higher than those drivers using VTS. This is a significant financial difference between the two systems, and has been pointed out by Ben Wellington of IQuantNY. 
+A good many factors significantly contribute to determining tip yield: trip distance, tolls, MTA tax, pickup time, and surcharges. These variables were just ordered by decreasing strength of their effect, with trip distance head and shoulders above the rest. The vendor of the payment system also has a statistically significant effect – but being a categorical variable, its effect strength can’t be assessed in tandem with the others. It is the case, however, that trips using the vendor system CMT have, on average, tip yields that are 0.6 percentage points higher than those drivers using VTS. This is a significant financial difference between the two systems, and when I Googled this result I found that this has also been [pointed out](http://iquantny.tumblr.com/post/107245431809/how-software-in-half-of-nyc-cabs-generates-52) by Ben Wellington of IQuantNY fame.
 
 #### Does weather influence tipping?
 
-What about the weather? Taxis become scarce (and Uber prices surge) during rain squalls - but can weather's effect on tipping behavior be detected in the data we have at hand?
+What about the weather? Taxis become scarce (and, notoriously, rideshare prices surge) during rain squalls - but can weather's effect on tipping behavior be detected in the data we have at hand?
 
-Using Weather Underground’s entire 2013 records from the Central Park station, I found that the 9 days with both rain and snow saw a statistically significant increase in tips as a share of the total fare for those days – albeit a small one, of 0.2 percentage points. Neither rain nor snow, in isolation, has a significant effect. The boxplot below illustrates this neatly.
+Using Weather Underground’s entire 2013 records from the Central Park station, I found that the 9 days with both rain and snow saw a statistically significant increase in tip yield for those days – albeit a small one, of 0.2 percentage points. Neither rain nor snow, in isolation, has a significant effect. The boxplot below illustrates this neatly.
 
 ```{r}
 weather <- read.csv("unified-weather-labels.csv", header = TRUE) 
@@ -181,7 +181,69 @@ ggplot(weather, aes(avg_temp, tip_share)) +
   labs(x = "Daily Average Temperature (°F)", y = "Tip amount (% of total fare)")
 ```
 
-Temperature also has a statistically significant effect on tipping; a one-degree decrease in temperature results in a 0.004 percentage point increase in tip. The distribution in the scatter plot is fairly apparent as well.
+Temperature also has a statistically significant effect on tipping; a one-degree decrease in temperature results in a 0.004 percentage point increase in tip yield. The distribution in the scatter plot is fairly apparent as well.
 
-#test commit
+### Are some drivers better than others at generating generous tips?
+
+We saw that tipping generosity generally decreases as trip distance lengthens. But what if there were a different class of drivers - or rides - that bucked this trend?
+
+Let's model driver characteristics by performing a linear regression for the tip amount <> trip distance relationship for every driver - and follow it up with cluster analysis on these driver-level regressions to identify groupings of drivers. Note that I'm going to focus not on tip yield as a share of the overall fare, but the raw tip amount. 
+
+```{r, message=FALSE, warning=FALSE}
+library(factoextra)
+library(nlme)
+tdZA <- tdZ %>% 
+  mutate(drivid = group_indices_(., .dots = "hack_license")) # adding this index improves query performance
+tdZA <- tdZA %>% group_by(drivid) %>% filter(n()>19)
+modelz <- lmList(tip_amt ~ trip_distance | drivid, data = tdZA)
+```
+
+Now we extract the characteristics that we're interested in from this crop of 22,000 driver regressions. I'm going to snag the intercept coefficient, the trip distance variable coefficient, the r squared, the p-value for the intercept coefficient, and the p-value for the trip distance coefficient.
+
+```{r}
+output1 <- function(x) c(coef(x), summary(x)$r.squared, 
+                         summary(x)$coefficients[,4])
+output2 <- t(sapply(modelz,output1))
+colnames(output2) <- c("intercept", "trip_distance", "r_squared", "intercept_p", "trip_distance_p")
+output2 <- as.data.frame(output2)
+sig_output <- output2 %>% filter(trip_distance_p<0.05) #filtering out drivers that don't have a significant trip distance coefficient
+```
+
+I chose to use k-means clustering to identify groupings based on two important and interpretable variables: the R-squared values and the trip distance coefficient (slope) values for each driver regression. Before choosing the number *k*, we will use the gap statistic to find the optimal number of clusters. [have to normalize data and k-means based on the variables of choice]
+
+
+```{r message=FALSE, warning=FALSE}
+set.seed (72)
+CG <- clusGap(sig_scaled[,2:3], FUNcluster = kmeans, nstart = 25, d.power = 2, method = Tibs2001SEmax, K.max = 10, B = 200)
+CG
+```
+
+# apply the cluster factor to the regular 
+
+```{r}
+sig_scaled <- data.frame (sig_scaled, stringsAsFactors = F)
+km2 = kmeans(sig_scaled[,2:3], 3, iter.max = 30, nstart = 25)
+km2$cluster <- as.factor(km2$cluster)
+ggplot(sig_output, aes(trip_distance, r_squared, color = km2$cluster)) + 
+  geom_point() +
+  theme_bw() +
+  labs(title = "Clustering of Drivers' Trip Distance <> Tip Amt Relationship", x = "Trip Distance Coefficient",
+       y = "R-Squared", color = "Cluster")
+```
+
+The 64 drivers in cluster 1 are far superior to those in cluster 2 in terms of consistently converting trip distance into unusually large tips, with a mean trip distance coefficient of 5.4 and mean r-squared of 0.71 versus means of 0.52 and 0.62, respectively, for the 21,614 drivers in cluster 2. 
+
+This serves as a jumping-off point for deeper dives into what distinguishes the drivers of cluster 1 – drivers whose distance from the rest of the pack would have been subsumed in the simpler Pearson-only analysis. 
+
+Perhaps these exceptional drivers are better at securing rides to and from destinations with attributes that make them unusually profitable. Hamptons – NYC trips could qualify, as could trips from 5-star hotels. These drivers might also be providing a high level of service – maybe they’re really good at reading customers’ preferences for engaging conversation, comfortable silence, or a thirst-quenching XXPoland Spring.XX
+
+
+### Takeaways
+
+
+```{r warning=FALSE, include=FALSE}
+library(xfun)
+optipng(dir = "/Users/AUGUSTUS/Workdir/tlc/R/apowMD1_files") 
+#installed via homebrew; compresses image size
+```
 
