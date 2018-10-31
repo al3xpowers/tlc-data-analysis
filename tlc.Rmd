@@ -234,8 +234,12 @@ k_choice
 
 The outcome is that we should use a *k* of 3. Although the clustering itself is performed on the normalized data, the cluster assigned to each driver is painted on to the original dataset in the service of interpetability.
 
-```{r warning=FALSE}
+```{r include=FALSE}
 library(data.table)
+```
+
+
+```{r warning=FALSE}
 sig_scaled <- data.frame (sig_scaled, stringsAsFactors = F)
 centers <- kmeans(sig_scaled[,2:3], centers = 3, nstart = 25)$centers
 centers.dt <- data.table(centers, key="trip_distance") # this is necessary to ensure the clusters are consistently ordered (i.e. after each knit cluster 1 remains cluster 1, not 3, etc.)
